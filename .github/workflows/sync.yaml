@@ -12,30 +12,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Sync manifests from apps.txt
+- name: Sync manifests from apps.txt
         run: |
           # Vytvoří složku bucket, pokud neexistuje
           mkdir -p bucket
 
-          # Smaže staré manifesty v bucketu, které už nejsou v apps.txt (volitelné, ale udržuje to pořádek)
-          # Pokud chcete aplikaci smazat z bucketu, stačí ji odebrat z apps.txt
-          rm -rf bucket/*
+          # Smaže staré manifesty v bucketu
+          rm -f bucket/*.json
 
-          # Čtení apps.txt řádek po řádku
-          while IFS= read -r url || [ -n "$url" ]; do
-            # Ignorovat prázdné řádky a komentáře začínající na #
-            [[ -z "$url" || "$url" =~ ^[[:space:]]*# ]] && continue
+          while IFS= read -r line || [ -n "$line" ]; do
+            url=$(echo "$line" | tr -d '\r' | xargs)
+            [[ -z "$url" || "$url" =~ ^# ]] && continue
             
-            # Odstranění případných white-spaces (odřádkování z Windows \r)
-            url=$(echo "$url" | tr -d '\r' | xargs)
-            
-            # Získání názvu souboru z URL (např. "vscode.json")
+            # --- AUTOMATICKÝ PŘEVOD NA RAW ODKAZ ---
+            # Pokud odkaz obsahuje github.com/.../blob/, převede ho na raw.githubusercontent.com
+            if [[ "$url" =~ github.com/([^/]+)/([^/]+)/blob/(.+) ]]; then
+              user="${BASH_REMATCH[1]}"
+              repo="${BASH_REMATCH[2]}"
+              rest="${BASH_REMATCH[3]}"
+              url="https://raw.githubusercontent.com/${user}/${repo}/${rest}"
+            fi
+            # ---------------------------------------
+
             filename=$(basename "$url")
+            echo "Stahuji: $filename z adresy $url..."
             
-            echo "Stahuji: $filename z $url"
-            
-            # Stažení manifestu do složky bucket
-            curl -sL "$url" -o "bucket/$filename"
+            if curl -fsL "$url" -o "bucket/$filename"; then
+              echo "✓ Úspěšně staženo: $filename"
+            else
+              echo "❌ Chyba při stahování URL: $url"
+              exit 1
+            fi
           done < apps.txt
 
       - name: Commit and Push
