@@ -5,6 +5,10 @@ on:
     - cron: '0 4 * * *' # Spustí se každý den ve 4:00 ráno
   workflow_dispatch: # Tlačítko pro ruční spuštění
 
+# KLÍČOVÉ: Povolí GitHub Actions zapisovat (pushovat) změny do vašeho repozitáře
+permissions:
+  contents: write
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -14,33 +18,44 @@ jobs:
 
       - name: Sync manifests from apps.txt
         run: |
-          # Vytvoří složku bucket, pokud neexistuje
           mkdir -p bucket
-
-          # Smaže staré manifesty v bucketu
           rm -f bucket/*.json
 
+          # Kontrola, zda apps.txt vůbec existuje
+          if [ ! -f apps.txt ]; then
+            echo "❌ Soubor apps.txt nebyl nalezen!"
+            exit 1
+          fi
+
           while IFS= read -r line || [ -n "$line" ]; do
-            url=$(echo "$line" | tr -d '\r' | xargs)
+            # Odstranění přebytečných mezer a konců řádků z Windows (\r)
+            url=$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr -d '\r')
+            
+            # Přeskočit prázdné řádky a komentáře
             [[ -z "$url" || "$url" =~ ^# ]] && continue
             
-            # --- AUTOMATICKÝ PŘEVOD NA RAW ODKAZ ---
-            # Pokud odkaz obsahuje github.com/.../blob/, převede ho na raw.githubusercontent.com
+            # Převod klasického GitHub odkazu na RAW verzi
             if [[ "$url" =~ github.com/([^/]+)/([^/]+)/blob/(.+) ]]; then
               user="${BASH_REMATCH[1]}"
               repo="${BASH_REMATCH[2]}"
               rest="${BASH_REMATCH[3]}"
               url="https://raw.githubusercontent.com/${user}/${repo}/${rest}"
             fi
-            # ---------------------------------------
 
             filename=$(basename "$url")
-            echo "Stahuji: $filename z adresy $url..."
+            
+            # Bezpečnostní kontrola, zda URL neobsahuje neplatné znaky
+            if [[ ! "$url" =~ ^https?:// ]]; then
+              echo "❌ Neplatný formát URL přeskočen: '$url'"
+              continue
+            fi
+
+            echo "Stahuji: $filename z adresy: $url"
             
             if curl -fsL "$url" -o "bucket/$filename"; then
-              echo "✓ Úspěšně staženo: $filename"
+              echo "✓ Úspěšně staženo"
             else
-              echo "❌ Chyba při stahování URL: $url"
+              echo "❌ Selhalo stahování URL: $url (Exit code curl: $?)"
               exit 1
             fi
           done < apps.txt
@@ -50,5 +65,11 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add bucket/
-          # Commitne změny pouze v případě, že se v aplikacích objevila nová verze nebo se změnil seznam
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update: Synchronizace aplikací podle apps.txt" && git push)
+          
+          # Pushne změny pouze pokud se reálně něco změnilo
+          if ! git diff --cached --quiet; then
+            git commit -m "Update: Synchronizace aplikací podle apps.txt"
+            git push
+          else
+            echo "Žádné změny k uložení."
+          fi
