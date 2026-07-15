@@ -12,7 +12,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-- name: Sync manifests from apps.txt
+      - name: Sync manifests from apps.txt
         run: |
           # Vytvoří složku bucket, pokud neexistuje
           mkdir -p bucket
