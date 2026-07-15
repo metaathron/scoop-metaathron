@@ -1,0 +1,47 @@
+name: Sync My Apps
+
+on:
+  schedule:
+    - cron: '0 4 * * *' # Spustí se každý den ve 4:00 ráno
+  workflow_dispatch: # Tlačítko pro ruční spuštění
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Sync manifests from apps.txt
+        run: |
+          # Vytvoří složku bucket, pokud neexistuje
+          mkdir -p bucket
+
+          # Smaže staré manifesty v bucketu, které už nejsou v apps.txt (volitelné, ale udržuje to pořádek)
+          # Pokud chcete aplikaci smazat z bucketu, stačí ji odebrat z apps.txt
+          rm -rf bucket/*
+
+          # Čtení apps.txt řádek po řádku
+          while IFS= read -r url || [ -n "$url" ]; do
+            # Ignorovat prázdné řádky a komentáře začínající na #
+            [[ -z "$url" || "$url" =~ ^[[:space:]]*# ]] && continue
+            
+            # Odstranění případných white-spaces (odřádkování z Windows \r)
+            url=$(echo "$url" | tr -d '\r' | xargs)
+            
+            # Získání názvu souboru z URL (např. "vscode.json")
+            filename=$(basename "$url")
+            
+            echo "Stahuji: $filename z $url"
+            
+            # Stažení manifestu do složky bucket
+            curl -sL "$url" -o "bucket/$filename"
+          done < apps.txt
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket/
+          # Commitne změny pouze v případě, že se v aplikacích objevila nová verze nebo se změnil seznam
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update: Synchronizace aplikací podle apps.txt" && git push)
